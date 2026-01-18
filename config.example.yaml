@@ -1,0 +1,91 @@
+# Database Anonymiser & Minimiser Configuration
+# This file defines how to connect to the database and what transformations to apply.
+
+# Database connection settings
+connection:
+  # Database type: mysql, postgres, or sqlite
+  type: "mysql"
+
+  # For MySQL/PostgreSQL:
+  host: "localhost"
+  port: 3306
+  username: "root"
+  password: "password"
+  database_name: "myapp"
+
+  # For SQLite (uncomment and use instead of above):
+  # type: "sqlite"
+  # file: "/path/to/database.db"
+
+# Table-specific configuration
+# Tables not listed here will be fully exported with no modifications.
+configuration:
+  # Sessions table: truncate (export schema only, no data)
+  sessions:
+    truncate: true
+
+  # Password reset tokens: truncate for security
+  password_resets:
+    truncate: true
+
+  # Audit logs: keep only recent entries
+  audit_logs:
+    retain: 1000  # Keep only 1000 most recent rows
+
+  # Users table: anonymise PII
+  users:
+    columns:
+      email: "{{faker.email}}"
+      first_name: "{{faker.firstName}}"
+      last_name: "{{faker.lastName}}"
+      phone: "{{faker.phone}}"
+      password_hash: "{{faker.password}}"  # Replace with random hash
+      ip_address: "{{faker.ipv4}}"
+
+  # Addresses table: anonymise location data
+  addresses:
+    columns:
+      street: "{{faker.address}}"
+      city: "{{faker.city}}"
+      country: "{{faker.country}}"
+
+  # Orders table: retain limited data with anonymisation
+  orders:
+    retain: 100  # Keep only 100 orders
+    columns:
+      customer_email: "{{faker.email}}"
+      customer_name: "{{faker.name}}"
+      shipping_address: "{{faker.address}}"
+      notes: "Order notes redacted"  # Static replacement
+
+  # Payments table: anonymise financial info
+  payments:
+    columns:
+      card_number: null  # Set to NULL
+      card_holder: "{{faker.name}}"
+      billing_address: "{{faker.address}}"
+
+  # Companies table: anonymise business info
+  companies:
+    columns:
+      name: "{{faker.company}}"
+      contact_email: "{{faker.email}}"
+      contact_phone: "{{faker.phone}}"
+
+# Available faker functions:
+# {{faker.name}}       - Full name (e.g., "John Smith")
+# {{faker.firstName}}  - First name only
+# {{faker.lastName}}   - Last name only
+# {{faker.email}}      - Email address
+# {{faker.phone}}      - Phone number
+# {{faker.address}}    - Street address
+# {{faker.city}}       - City name
+# {{faker.country}}    - Country name
+# {{faker.company}}    - Company name
+# {{faker.uuid}}       - UUID v4
+# {{faker.username}}   - Username
+# {{faker.password}}   - Random password hash
+# {{faker.ipv4}}       - IPv4 address
+# {{faker.date}}       - Random date (YYYY-MM-DD)
+# {{faker.text}}       - Lorem ipsum text
+# {{faker.number}}     - Random 8-digit number

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod init:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(./dbmask:*)",
+      "Bash(./dbmask version:*)",
+      "Bash(sqlite3:*)"
+    ]
+  }
+}
