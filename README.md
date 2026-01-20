@@ -409,12 +409,89 @@ go mod tidy
 # Build with CGO (required for SQLite)
 CGO_ENABLED=1 go build -o dbmask ./cmd/dbmask
 
-# Run tests
+# Build with version information
+CGO_ENABLED=1 go build -ldflags="-s -w -X main.version=v1.0.0" -o dbmask ./cmd/dbmask
+
+# Build without CGO (no SQLite support, but fully cross-platform)
+CGO_ENABLED=0 go build -o dbmask ./cmd/dbmask
+```
+
+### Testing
+
+The project has comprehensive unit tests covering all modules.
+
+```bash
+# Run all tests
 go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with race detection (recommended)
+go test -race ./...
+
+# Run tests with coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+
+# Run tests with race detection and coverage
+go test -v -race -coverprofile=coverage.out ./...
 
 # Run a specific test
 go test -run TestAnonymiseRow ./internal/anonymiser/
+
+# Run tests for a specific package
+go test -v ./internal/config/
 ```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration and releases:
+
+- **CI Workflow** (`.github/workflows/ci.yml`): Runs on every push/PR to main
+  - Runs all tests with race detection and coverage
+  - Builds binaries for Linux, macOS, and Windows (amd64, arm64)
+  - Runs golangci-lint for code quality
+
+- **Release Workflow** (`.github/workflows/release.yml`): Triggers on version tags
+  - Runs full test suite
+  - Builds release binaries for all platforms
+  - Creates GitHub release with changelog and downloadable assets
+
+### Creating a Release
+
+The project uses semantic versioning (semver). To create a new release:
+
+```bash
+# Ensure all changes are committed
+git status
+
+# Create a version tag (must start with 'v')
+git tag v1.0.0
+
+# Or for pre-release versions
+git tag v1.0.0-beta.1
+git tag v1.0.0-rc.1
+
+# Push the tag to trigger the release workflow
+git push origin v1.0.0
+```
+
+The release workflow will automatically:
+1. Run all tests
+2. Build binaries for Linux, macOS, and Windows
+3. Create archives (.tar.gz for Linux/macOS, .zip for Windows)
+4. Generate a changelog from commit messages
+5. Create a GitHub release with all assets
+
+**Version format examples:**
+- `v1.0.0` - Stable release
+- `v1.0.1` - Patch release (bug fixes)
+- `v1.1.0` - Minor release (new features, backwards compatible)
+- `v2.0.0` - Major release (breaking changes)
+- `v1.0.0-alpha.1` - Alpha pre-release
+- `v1.0.0-beta.1` - Beta pre-release
+- `v1.0.0-rc.1` - Release candidate
 
 ### Project Structure
 

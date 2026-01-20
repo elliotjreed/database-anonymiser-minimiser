@@ -16,7 +16,9 @@ import (
 )
 
 var (
-	version = "0.1.0"
+	// version is set at build time via ldflags
+	// go build -ldflags="-X main.version=v1.0.0"
+	version = "dev"
 
 	configPath   string
 	outputPath   string

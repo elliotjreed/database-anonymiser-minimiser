@@ -1,14 +1,35 @@
 {
   "permissions": {
     "allow": [
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
       "Bash(go mod init:*)",
       "Bash(go mod tidy:*)",
       "Bash(go build:*)",
+      "Bash(go test:*)",
       "Bash(./dbmask:*)",
-      "Bash(./dbmask version:*)",
-      "Bash(sqlite3:*)",
-      "Bash(tree:*)",
-      "Bash(go test:*)"
-    ]
+      "Bash(./dbmask version:*)"
+    ],
+    "ask": [
+      "Bash(rm:*)"
+    ],
+    "deny": [
+      "Bash(ansible-playbook:*)",
+      "Bash(ansible-vault:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(ssh:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.j2.*)"
+    ],
+    "env": {
+      "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
+    }
   }
 }
