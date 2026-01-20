@@ -51,8 +51,8 @@ configuration:
 	if tableConfig == nil {
 		t.Fatal("GetTableConfig(users) returned nil")
 	}
-	if tableConfig.Retain != 100 {
-		t.Errorf("tableConfig.Retain = %d, want %d", tableConfig.Retain, 100)
+	if tableConfig.Retain.Count != 100 {
+		t.Errorf("tableConfig.Retain.Count = %d, want %d", tableConfig.Retain.Count, 100)
 	}
 	if tableConfig.Columns["email"] != "{{faker.email}}" {
 		t.Errorf("tableConfig.Columns[email] = %q, want %q", tableConfig.Columns["email"], "{{faker.email}}")
@@ -361,7 +361,7 @@ func TestGetTableConfig(t *testing.T) {
 		Configuration: map[string]*TableConfig{
 			"users": {
 				Truncate: false,
-				Retain:   100,
+				Retain:   RetainConfig{Count: 100},
 			},
 			"orders": {
 				Truncate: true,
@@ -374,8 +374,8 @@ func TestGetTableConfig(t *testing.T) {
 		if tc == nil {
 			t.Fatal("GetTableConfig(users) returned nil")
 		}
-		if tc.Retain != 100 {
-			t.Errorf("Retain = %d, want %d", tc.Retain, 100)
+		if tc.Retain.Count != 100 {
+			t.Errorf("Retain.Count = %d, want %d", tc.Retain.Count, 100)
 		}
 	})
 
@@ -408,7 +408,7 @@ func TestSave(t *testing.T) {
 		Configuration: map[string]*TableConfig{
 			"users": {
 				Truncate: false,
-				Retain:   100,
+				Retain:   RetainConfig{Count: 100},
 				Columns: map[string]string{
 					"email": "{{faker.email}}",
 				},

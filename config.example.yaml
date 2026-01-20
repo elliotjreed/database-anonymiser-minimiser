@@ -28,9 +28,9 @@ configuration:
   password_resets:
     truncate: true
 
-  # Audit logs: keep only recent entries
+  # Audit logs: keep only recent entries (count-based retain)
   audit_logs:
-    retain: 1000  # Keep only 1000 most recent rows
+    retain: 1000  # Keep only 1000 rows
 
   # Users table: anonymise PII
   users:
@@ -49,9 +49,11 @@ configuration:
       city: "{{faker.city}}"
       country: "{{faker.country}}"
 
-  # Orders table: retain limited data with anonymisation
+  # Orders table: retain data after a specific date (date-based retain)
   orders:
-    retain: 100  # Keep only 100 orders
+    retain:
+      column_name: "date_time"
+      after_date: "2024-01-01"  # Keep only orders since this date
     columns:
       customer_email: "{{faker.email}}"
       customer_name: "{{faker.name}}"

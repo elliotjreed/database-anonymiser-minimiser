@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,10 +28,153 @@ type Connection struct {
 	File         string `yaml:"file,omitempty" json:"file,omitempty"`                   // SQLite file path
 }
 
+// RetainConfig defines how rows should be retained during export.
+// It supports two modes:
+// 1. Count-based: retain a specific number of rows (e.g., retain: 100)
+// 2. Date-based: retain rows after a specific date (e.g., retain: {column_name: "created_at", after_date: "2024-01-01"})
+type RetainConfig struct {
+	Count      int       // Number of rows to retain (0 = all rows)
+	ColumnName string    // Column name for date-based filtering
+	AfterDate  time.Time // Only retain rows after this date
+}
+
+// IsDateBased returns true if the retain config uses date-based filtering.
+func (r *RetainConfig) IsDateBased() bool {
+	return r.ColumnName != "" && !r.AfterDate.IsZero()
+}
+
+// IsCountBased returns true if the retain config uses count-based limiting.
+func (r *RetainConfig) IsCountBased() bool {
+	return r.Count > 0
+}
+
+// IsEmpty returns true if no retain configuration is set.
+func (r *RetainConfig) IsEmpty() bool {
+	return r.Count == 0 && r.ColumnName == "" && r.AfterDate.IsZero()
+}
+
+// retainConfigRaw is used for parsing the flexible retain format.
+type retainConfigRaw struct {
+	ColumnName string `yaml:"column_name" json:"column_name"`
+	AfterDate  string `yaml:"after_date" json:"after_date"`
+}
+
+// UnmarshalYAML implements custom YAML unmarshaling for RetainConfig.
+// It supports both integer values and object format.
+func (r *RetainConfig) UnmarshalYAML(value *yaml.Node) error {
+	// Try to unmarshal as an integer first
+	var intVal int
+	if err := value.Decode(&intVal); err == nil {
+		r.Count = intVal
+		return nil
+	}
+
+	// Try to unmarshal as an object
+	var raw retainConfigRaw
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("retain must be an integer or an object with column_name and after_date: %w", err)
+	}
+
+	if raw.ColumnName == "" {
+		return fmt.Errorf("retain object requires column_name")
+	}
+	if raw.AfterDate == "" {
+		return fmt.Errorf("retain object requires after_date")
+	}
+
+	// Parse the date - support multiple formats
+	parsedDate, err := parseDate(raw.AfterDate)
+	if err != nil {
+		return fmt.Errorf("invalid after_date format %q: %w", raw.AfterDate, err)
+	}
+
+	r.ColumnName = raw.ColumnName
+	r.AfterDate = parsedDate
+	return nil
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for RetainConfig.
+func (r *RetainConfig) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as an integer first
+	var intVal int
+	if err := json.Unmarshal(data, &intVal); err == nil {
+		r.Count = intVal
+		return nil
+	}
+
+	// Try to unmarshal as an object
+	var raw retainConfigRaw
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("retain must be an integer or an object with column_name and after_date: %w", err)
+	}
+
+	if raw.ColumnName == "" {
+		return fmt.Errorf("retain object requires column_name")
+	}
+	if raw.AfterDate == "" {
+		return fmt.Errorf("retain object requires after_date")
+	}
+
+	parsedDate, err := parseDate(raw.AfterDate)
+	if err != nil {
+		return fmt.Errorf("invalid after_date format %q: %w", raw.AfterDate, err)
+	}
+
+	r.ColumnName = raw.ColumnName
+	r.AfterDate = parsedDate
+	return nil
+}
+
+// MarshalYAML implements custom YAML marshaling for RetainConfig.
+func (r RetainConfig) MarshalYAML() (interface{}, error) {
+	if r.IsDateBased() {
+		return map[string]string{
+			"column_name": r.ColumnName,
+			"after_date":  r.AfterDate.Format("2006-01-02"),
+		}, nil
+	}
+	if r.Count > 0 {
+		return r.Count, nil
+	}
+	return nil, nil
+}
+
+// MarshalJSON implements custom JSON marshaling for RetainConfig.
+func (r RetainConfig) MarshalJSON() ([]byte, error) {
+	if r.IsDateBased() {
+		return json.Marshal(map[string]string{
+			"column_name": r.ColumnName,
+			"after_date":  r.AfterDate.Format("2006-01-02"),
+		})
+	}
+	if r.Count > 0 {
+		return json.Marshal(r.Count)
+	}
+	return []byte("null"), nil
+}
+
+// parseDate attempts to parse a date string in various formats.
+func parseDate(s string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, s); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("could not parse date, supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS")
+}
+
 // TableConfig defines how a table should be processed.
 type TableConfig struct {
 	Truncate bool              `yaml:"truncate,omitempty" json:"truncate,omitempty"` // If true, export schema only
-	Retain   int               `yaml:"retain,omitempty" json:"retain,omitempty"`     // Limit number of rows (0 = all)
+	Retain   RetainConfig      `yaml:"retain,omitempty" json:"retain,omitempty"`     // Row retention config (count or date-based)
 	Columns  map[string]string `yaml:"columns,omitempty" json:"columns,omitempty"`   // Column anonymisation rules
 }
 

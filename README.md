@@ -6,7 +6,7 @@ A CLI tool for exporting database schemas and data while anonymising sensitive i
 
 - **Multi-database support**: MySQL, PostgreSQL, and SQLite
 - **Data anonymisation**: Replace sensitive data with realistic fake values using faker templates
-- **Data minimisation**: Truncate tables or retain only a subset of rows
+- **Data minimisation**: Truncate tables, retain a row count, or filter by date
 - **Foreign key aware**: Automatically orders tables by dependencies for valid imports
 - **Memory efficient**: Streams data in configurable batches (default: 1000 rows)
 - **Flexible configuration**: YAML or JSON config files
@@ -55,8 +55,13 @@ configuration:
   sessions:
     truncate: true
 
+  audit_logs:
+    retain: 100  # Keep first 100 rows
+
   orders:
-    retain: 100
+    retain:
+      column_name: "created_at"
+      after_date: "2024-01-01"  # Keep only orders since this date
 ```
 
 2. Run the export:
@@ -202,7 +207,9 @@ configuration:
 
 #### Retain (Limit Rows)
 
-Keep only a specified number of rows. Useful for large tables where you only need sample data.
+The `retain` option supports two modes for limiting exported rows:
+
+**Count-based**: Keep only a specified number of rows. Useful for large tables where you only need sample data.
 
 ```yaml
 configuration:
@@ -212,6 +219,27 @@ configuration:
   orders:
     retain: 500
 ```
+
+**Date-based**: Keep only rows after a specified date. Useful for time-series data where you want recent records.
+
+```yaml
+configuration:
+  orders:
+    retain:
+      column_name: "created_at"    # The date/datetime column to filter on
+      after_date: "2024-01-01"     # Keep rows where column > this date
+
+  events:
+    retain:
+      column_name: "event_time"
+      after_date: "2024-06-01"
+```
+
+Supported date formats:
+- `YYYY-MM-DD` (e.g., `2024-01-01`)
+- `YYYY-MM-DDTHH:MM:SS` (e.g., `2024-01-01T00:00:00`)
+- `YYYY-MM-DD HH:MM:SS` (e.g., `2024-01-01 00:00:00`)
+- RFC3339 (e.g., `2024-01-01T00:00:00Z`)
 
 #### Column Anonymisation
 
@@ -231,12 +259,22 @@ configuration:
 
 #### Combined Operations
 
-You can combine `retain` with column anonymisation:
+You can combine `retain` (count-based or date-based) with column anonymisation:
 
 ```yaml
 configuration:
-  orders:
+  # Count-based retain with anonymisation
+  audit_logs:
     retain: 100
+    columns:
+      user_email: "{{faker.email}}"
+      ip_address: "{{faker.ipv4}}"
+
+  # Date-based retain with anonymisation
+  orders:
+    retain:
+      column_name: "order_date"
+      after_date: "2024-01-01"
     columns:
       customer_email: "{{faker.email}}"
       shipping_address: "{{faker.address}}"
@@ -292,9 +330,15 @@ configuration:
   oauth_tokens:
     truncate: true
 
-  # Minimise: Keep limited audit history
+  # Minimise: Keep limited audit history (count-based)
   audit_logs:
     retain: 5000
+
+  # Minimise: Keep recent events only (date-based)
+  events:
+    retain:
+      column_name: "event_time"
+      after_date: "2024-01-01"
 
   # Anonymise: User PII
   users:
@@ -322,9 +366,11 @@ configuration:
       city: "{{faker.city}}"
       country: "{{faker.country}}"
 
-  # Minimise + Anonymise: Orders
+  # Minimise + Anonymise: Orders (date-based retain)
   orders:
-    retain: 200
+    retain:
+      column_name: "created_at"
+      after_date: "2024-01-01"
     columns:
       customer_email: "{{faker.email}}"
       shipping_address: "{{faker.address}}"

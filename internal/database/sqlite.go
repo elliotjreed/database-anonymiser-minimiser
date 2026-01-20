@@ -149,7 +149,7 @@ func (d *SQLiteDriver) GetForeignKeys() ([]ForeignKey, error) {
 }
 
 // StreamRows streams rows from a table in batches.
-func (d *SQLiteDriver) StreamRows(table string, limit int, batchSize int, callback RowCallback) error {
+func (d *SQLiteDriver) StreamRows(table string, opts StreamOptions, batchSize int, callback RowCallback) error {
 	// Get column names first
 	columns, err := d.GetColumns(table)
 	if err != nil {
@@ -166,11 +166,20 @@ func (d *SQLiteDriver) StreamRows(table string, limit int, batchSize int, callba
 		strings.Join(columnNames, ", "),
 		d.QuoteIdentifier(table))
 
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+	var args []any
+
+	// Add date-based WHERE clause if specified
+	if opts.ColumnName != "" && !opts.AfterDate.IsZero() {
+		query += fmt.Sprintf(" WHERE %s > ?", d.QuoteIdentifier(opts.ColumnName))
+		args = append(args, opts.AfterDate.Format("2006-01-02 15:04:05"))
 	}
 
-	rows, err := d.db.Query(query)
+	// Add LIMIT clause if specified
+	if opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
+
+	rows, err := d.db.Query(query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to query rows: %w", err)
 	}

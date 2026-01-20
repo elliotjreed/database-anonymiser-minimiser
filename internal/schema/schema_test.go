@@ -61,7 +61,7 @@ func (m *mockDriver) GetForeignKeys() ([]database.ForeignKey, error) {
 	return m.foreignKeys, nil
 }
 
-func (m *mockDriver) StreamRows(table string, limit int, batchSize int, callback database.RowCallback) error {
+func (m *mockDriver) StreamRows(table string, opts database.StreamOptions, batchSize int, callback database.RowCallback) error {
 	return nil
 }
 

@@ -3,9 +3,17 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/elliotjreed/database-anonymiser-minimiser/internal/config"
 )
+
+// StreamOptions contains options for streaming rows from a table.
+type StreamOptions struct {
+	Limit      int       // Maximum number of rows to fetch (0 = unlimited)
+	ColumnName string    // Column name for date-based filtering
+	AfterDate  time.Time // Only fetch rows where ColumnName > AfterDate
+}
 
 // ForeignKey represents a foreign key relationship.
 type ForeignKey struct {
@@ -47,8 +55,8 @@ type Driver interface {
 	GetForeignKeys() ([]ForeignKey, error)
 
 	// StreamRows streams rows from a table in batches.
-	// If limit is 0, all rows are streamed.
-	StreamRows(table string, limit int, batchSize int, callback RowCallback) error
+	// The opts parameter controls row filtering (by count or date).
+	StreamRows(table string, opts StreamOptions, batchSize int, callback RowCallback) error
 
 	// GetRowCount returns the number of rows in a table.
 	GetRowCount(table string) (int64, error)

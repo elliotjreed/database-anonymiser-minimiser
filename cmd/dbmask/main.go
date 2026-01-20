@@ -208,8 +208,11 @@ func printDryRun(tables []schema.TableInfo, anon *anonymiser.Anonymiser) error {
 
 		if anon.ShouldTruncate(table.Name) {
 			fmt.Println("  Action: TRUNCATE (no data will be exported)")
-		} else if limit := anon.GetRetainLimit(table.Name); limit > 0 {
-			fmt.Printf("  Action: RETAIN %d rows\n", limit)
+		} else if retainCfg := anon.GetRetainConfig(table.Name); retainCfg.IsDateBased() {
+			fmt.Printf("  Action: RETAIN rows where %s > %s\n",
+				retainCfg.ColumnName, retainCfg.AfterDate.Format("2006-01-02"))
+		} else if retainCfg.IsCountBased() {
+			fmt.Printf("  Action: RETAIN %d rows\n", retainCfg.Count)
 		} else {
 			fmt.Println("  Action: FULL EXPORT")
 		}

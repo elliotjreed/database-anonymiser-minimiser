@@ -38,13 +38,13 @@ func (m *mockDriver) GetColumns(table string) ([]database.ColumnInfo, error) {
 func (m *mockDriver) GetForeignKeys() ([]database.ForeignKey, error) {
 	return nil, nil
 }
-func (m *mockDriver) StreamRows(table string, limit int, batchSize int, callback database.RowCallback) error {
+func (m *mockDriver) StreamRows(table string, opts database.StreamOptions, batchSize int, callback database.RowCallback) error {
 	if m.streamErr != nil {
 		return m.streamErr
 	}
 	if rows, ok := m.rows[table]; ok {
-		if limit > 0 && limit < len(rows) {
-			rows = rows[:limit]
+		if opts.Limit > 0 && opts.Limit < len(rows) {
+			rows = rows[:opts.Limit]
 		}
 		// Process in batches
 		for i := 0; i < len(rows); i += batchSize {
@@ -275,7 +275,7 @@ func TestExport(t *testing.T) {
 		}
 		cfg := &config.Config{
 			Configuration: map[string]*config.TableConfig{
-				"users": {Retain: 2},
+				"users": {Retain: config.RetainConfig{Count: 2}},
 			},
 		}
 		anon := anonymiser.New(cfg)

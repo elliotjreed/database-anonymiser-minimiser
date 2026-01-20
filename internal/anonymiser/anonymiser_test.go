@@ -299,11 +299,11 @@ func TestShouldTruncate(t *testing.T) {
 	}
 }
 
-func TestGetRetainLimit(t *testing.T) {
+func TestGetRetainConfig(t *testing.T) {
 	cfg := &config.Config{
 		Configuration: map[string]*config.TableConfig{
-			"users":  {Retain: 100},
-			"orders": {Retain: 0},
+			"users":  {Retain: config.RetainConfig{Count: 100}},
+			"orders": {Retain: config.RetainConfig{Count: 0}},
 			"logs":   {},
 		},
 	}
@@ -321,9 +321,9 @@ func TestGetRetainLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
-			got := anon.GetRetainLimit(tt.table)
-			if got != tt.want {
-				t.Errorf("GetRetainLimit(%q) = %v, want %v", tt.table, got, tt.want)
+			got := anon.GetRetainConfig(tt.table)
+			if got.Count != tt.want {
+				t.Errorf("GetRetainConfig(%q).Count = %v, want %v", tt.table, got.Count, tt.want)
 			}
 		})
 	}
