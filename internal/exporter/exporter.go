@@ -20,6 +20,13 @@ const (
 	BufferSize = 64 * 1024
 )
 
+// Stats contains export statistics.
+type Stats struct {
+	TablesExported  int
+	TablesTruncated int
+	RowsExported    int64
+}
+
 // Exporter handles SQL dump generation.
 type Exporter struct {
 	driver     database.Driver
@@ -28,6 +35,7 @@ type Exporter struct {
 	verbose    bool
 	batchSize  int
 	dbType     string
+	stats      Stats
 }
 
 // Options configures the exporter behavior.
@@ -176,11 +184,15 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 		return err
 	}
 
+	// Track table export
+	e.stats.TablesExported++
+
 	// Check if table should be truncated
 	if e.anonymiser.ShouldTruncate(table.Name) {
 		if e.verbose {
 			fmt.Printf("  Truncating table: %s (no data)\n", table.Name)
 		}
+		e.stats.TablesTruncated++
 		return nil
 	}
 
@@ -198,11 +210,13 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 
 	// Stream and export rows
 	var batch []map[string]any
+	var rowCount int64
 	err := e.driver.StreamRows(table.Name, limit, e.batchSize, func(rows []map[string]any) error {
 		for _, row := range rows {
 			// Apply anonymization
 			anonRow := e.anonymiser.AnonymiseRow(table.Name, row)
 			batch = append(batch, anonRow)
+			rowCount++
 
 			// Write batch when full
 			if len(batch) >= e.batchSize {
@@ -214,6 +228,7 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 		}
 		return nil
 	})
+	e.stats.RowsExported += rowCount
 	if err != nil {
 		return err
 	}
@@ -319,4 +334,9 @@ func (e *Exporter) escapeString(s string) string {
 	s = strings.ReplaceAll(s, "\x1a", "\\Z")
 
 	return "'" + s + "'"
+}
+
+// GetStats returns the export statistics.
+func (e *Exporter) GetStats() Stats {
+	return e.stats
 }

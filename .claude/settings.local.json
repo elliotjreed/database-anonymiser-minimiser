@@ -6,7 +6,9 @@
       "Bash(go build:*)",
       "Bash(./dbmask:*)",
       "Bash(./dbmask version:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(tree:*)",
+      "Bash(go test:*)"
     ]
   }
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -74,6 +76,12 @@ Use --truncate to add new tables with truncate: true instead.`,
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
+	startTime := time.Now()
+
+	// Get initial memory stats
+	var memStatsBefore runtime.MemStats
+	runtime.ReadMemStats(&memStatsBefore)
+
 	// Load configuration
 	if verbose {
 		fmt.Printf("Loading configuration from: %s\n", configPath)
@@ -163,8 +171,26 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("export failed: %w", err)
 	}
 
+	// Collect final statistics
+	elapsed := time.Since(startTime)
+	var memStatsAfter runtime.MemStats
+	runtime.ReadMemStats(&memStatsAfter)
+	stats := exp.GetStats()
+
+	// Print statistics
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "=== Export Statistics ===")
+	fmt.Fprintf(os.Stderr, "Tables exported:   %d\n", stats.TablesExported)
+	fmt.Fprintf(os.Stderr, "Tables truncated:  %d\n", stats.TablesTruncated)
+	fmt.Fprintf(os.Stderr, "Rows exported:     %d\n", stats.RowsExported)
+	fmt.Fprintf(os.Stderr, "Run time:          %s\n", elapsed.Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "Memory used:       %s\n", formatBytes(memStatsAfter.TotalAlloc-memStatsBefore.TotalAlloc))
+	fmt.Fprintf(os.Stderr, "Peak memory:       %s\n", formatBytes(memStatsAfter.HeapAlloc))
+	fmt.Fprintf(os.Stderr, "CPU cores used:    %d\n", runtime.NumCPU())
+
 	if verbose {
-		fmt.Println("Export completed successfully!")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Export completed successfully!")
 	}
 
 	return nil
@@ -281,4 +307,24 @@ func runSync(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Added %d table(s).\n", len(newTables))
 
 	return nil
+}
+
+// formatBytes formats bytes into a human-readable string.
+func formatBytes(bytes uint64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
