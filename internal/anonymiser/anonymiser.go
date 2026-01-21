@@ -109,11 +109,11 @@ func (a *Anonymiser) ShouldTruncate(tableName string) bool {
 	return tableConfig.Truncate
 }
 
-// GetRetainLimit returns the row limit for a table (0 = all rows).
-func (a *Anonymiser) GetRetainLimit(tableName string) int {
+// GetRetainConfig returns the retain configuration for a table.
+func (a *Anonymiser) GetRetainConfig(tableName string) config.RetainConfig {
 	tableConfig := a.config.GetTableConfig(tableName)
 	if tableConfig == nil {
-		return 0
+		return config.RetainConfig{}
 	}
 	return tableConfig.Retain
 }

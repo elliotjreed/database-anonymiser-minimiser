@@ -294,7 +294,7 @@ func TestSQLiteDriver_StreamRows(t *testing.T) {
 		var totalRows int
 		var batches int
 
-		err := driver.StreamRows("users", 0, 3, func(rows []map[string]any) error {
+		err := driver.StreamRows("users", StreamOptions{}, 3, func(rows []map[string]any) error {
 			totalRows += len(rows)
 			batches++
 			return nil
@@ -317,7 +317,7 @@ func TestSQLiteDriver_StreamRows(t *testing.T) {
 	t.Run("stream with limit", func(t *testing.T) {
 		var totalRows int
 
-		err := driver.StreamRows("users", 5, 10, func(rows []map[string]any) error {
+		err := driver.StreamRows("users", StreamOptions{Limit: 5}, 10, func(rows []map[string]any) error {
 			totalRows += len(rows)
 			return nil
 		})
@@ -334,7 +334,7 @@ func TestSQLiteDriver_StreamRows(t *testing.T) {
 	t.Run("callback error propagation", func(t *testing.T) {
 		testErr := errors.New("test error")
 
-		err := driver.StreamRows("users", 0, 10, func(rows []map[string]any) error {
+		err := driver.StreamRows("users", StreamOptions{}, 10, func(rows []map[string]any) error {
 			return testErr
 		})
 
@@ -346,7 +346,7 @@ func TestSQLiteDriver_StreamRows(t *testing.T) {
 	t.Run("empty table", func(t *testing.T) {
 		callbackCalled := false
 
-		err := driver.StreamRows("products", 0, 10, func(rows []map[string]any) error {
+		err := driver.StreamRows("products", StreamOptions{}, 10, func(rows []map[string]any) error {
 			callbackCalled = true
 			return nil
 		})
@@ -363,7 +363,7 @@ func TestSQLiteDriver_StreamRows(t *testing.T) {
 	t.Run("verify row data", func(t *testing.T) {
 		var firstRow map[string]any
 
-		err := driver.StreamRows("users", 1, 10, func(rows []map[string]any) error {
+		err := driver.StreamRows("users", StreamOptions{Limit: 1}, 10, func(rows []map[string]any) error {
 			if len(rows) > 0 {
 				firstRow = rows[0]
 			}
@@ -482,7 +482,7 @@ func TestSQLiteDriver_DataTypes(t *testing.T) {
 	}
 
 	var row map[string]any
-	err = driver.StreamRows("types_test", 1, 10, func(rows []map[string]any) error {
+	err = driver.StreamRows("types_test", StreamOptions{Limit: 1}, 10, func(rows []map[string]any) error {
 		if len(rows) > 0 {
 			row = rows[0]
 		}

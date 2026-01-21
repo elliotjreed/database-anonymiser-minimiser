@@ -196,10 +196,22 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 		return nil
 	}
 
-	// Get row limit
-	limit := e.anonymiser.GetRetainLimit(table.Name)
-	if e.verbose && limit > 0 {
-		fmt.Printf("  Retaining %d rows from: %s\n", limit, table.Name)
+	// Get retain configuration
+	retainCfg := e.anonymiser.GetRetainConfig(table.Name)
+	if e.verbose {
+		if retainCfg.IsDateBased() {
+			fmt.Printf("  Retaining rows from %s where %s > %s\n",
+				table.Name, retainCfg.ColumnName, retainCfg.AfterDate.Format("2006-01-02"))
+		} else if retainCfg.IsCountBased() {
+			fmt.Printf("  Retaining %d rows from: %s\n", retainCfg.Count, table.Name)
+		}
+	}
+
+	// Build stream options from retain config
+	streamOpts := database.StreamOptions{
+		Limit:      retainCfg.Count,
+		ColumnName: retainCfg.ColumnName,
+		AfterDate:  retainCfg.AfterDate,
 	}
 
 	// Get column names
@@ -211,7 +223,7 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 	// Stream and export rows
 	var batch []map[string]any
 	var rowCount int64
-	err := e.driver.StreamRows(table.Name, limit, e.batchSize, func(rows []map[string]any) error {
+	err := e.driver.StreamRows(table.Name, streamOpts, e.batchSize, func(rows []map[string]any) error {
 		for _, row := range rows {
 			// Apply anonymization
 			anonRow := e.anonymiser.AnonymiseRow(table.Name, row)
