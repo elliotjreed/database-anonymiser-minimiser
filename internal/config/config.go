@@ -13,8 +13,9 @@ import (
 
 // Config represents the full configuration file structure.
 type Config struct {
-	Connection    Connection              `yaml:"connection" json:"connection"`
-	Configuration map[string]*TableConfig `yaml:"configuration" json:"configuration"`
+	Connection          Connection              `yaml:"connection" json:"connection"`
+	ForeignKeyIntegrity *bool                   `yaml:"foreign_key_integrity,omitempty" json:"foreign_key_integrity,omitempty"`
+	Configuration       map[string]*TableConfig `yaml:"configuration" json:"configuration"`
 }
 
 // Connection holds database connection parameters.
@@ -173,9 +174,10 @@ func parseDate(s string) (time.Time, error) {
 
 // TableConfig defines how a table should be processed.
 type TableConfig struct {
-	Truncate bool              `yaml:"truncate,omitempty" json:"truncate,omitempty"` // If true, export schema only
-	Retain   RetainConfig      `yaml:"retain,omitempty" json:"retain,omitempty"`     // Row retention config (count or date-based)
-	Columns  map[string]string `yaml:"columns,omitempty" json:"columns,omitempty"`   // Column anonymisation rules
+	Truncate            bool              `yaml:"truncate,omitempty" json:"truncate,omitempty"`                           // If true, export schema only
+	ForeignKeyIntegrity *bool             `yaml:"foreign_key_integrity,omitempty" json:"foreign_key_integrity,omitempty"` // Override global FK integrity setting
+	Retain              RetainConfig      `yaml:"retain,omitempty" json:"retain,omitempty"`                               // Row retention config (count or date-based)
+	Columns             map[string]string `yaml:"columns,omitempty" json:"columns,omitempty"`                             // Column anonymisation rules
 }
 
 // Load reads and parses a configuration file (YAML or JSON).
@@ -243,6 +245,18 @@ func (c *Config) GetTableConfig(tableName string) *TableConfig {
 		return nil
 	}
 	return c.Configuration[tableName]
+}
+
+// ShouldEnforceFKIntegrity returns whether foreign key integrity should be enforced for a table.
+// Table-level settings override the global setting.
+func (c *Config) ShouldEnforceFKIntegrity(tableName string) bool {
+	if tc := c.GetTableConfig(tableName); tc != nil && tc.ForeignKeyIntegrity != nil {
+		return *tc.ForeignKeyIntegrity
+	}
+	if c.ForeignKeyIntegrity != nil {
+		return *c.ForeignKeyIntegrity
+	}
+	return false
 }
 
 // DSN returns the connection string for the database.

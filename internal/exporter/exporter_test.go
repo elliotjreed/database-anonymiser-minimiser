@@ -16,11 +16,11 @@ import (
 
 // mockDriver implements database.Driver for testing
 type mockDriver struct {
-	dbType      string
-	tables      []string
-	columns     map[string][]database.ColumnInfo
-	rows        map[string][]map[string]any
-	streamErr   error
+	dbType    string
+	tables    []string
+	columns   map[string][]database.ColumnInfo
+	rows      map[string][]map[string]any
+	streamErr error
 }
 
 func (m *mockDriver) Connect(cfg *config.Connection) error { return nil }
@@ -37,6 +37,9 @@ func (m *mockDriver) GetColumns(table string) ([]database.ColumnInfo, error) {
 }
 func (m *mockDriver) GetForeignKeys() ([]database.ForeignKey, error) {
 	return nil, nil
+}
+func (m *mockDriver) GetPrimaryKey(table string) ([]string, error) {
+	return []string{"id"}, nil
 }
 func (m *mockDriver) StreamRows(table string, opts database.StreamOptions, batchSize int, callback database.RowCallback) error {
 	if m.streamErr != nil {
@@ -75,6 +78,17 @@ func (m *mockDriver) GetDatabaseType() string {
 	return "sqlite"
 }
 
+func (m *mockDriver) GetFilteredRowCount(table string, opts database.StreamOptions) (int64, error) {
+	count, err := m.GetRowCount(table)
+	if err != nil {
+		return 0, err
+	}
+	if opts.Limit > 0 && count > int64(opts.Limit) {
+		return int64(opts.Limit), nil
+	}
+	return count, nil
+}
+
 func TestNew(t *testing.T) {
 	driver := &mockDriver{}
 	cfg := &config.Config{}
@@ -82,7 +96,7 @@ func TestNew(t *testing.T) {
 	var buf bytes.Buffer
 
 	t.Run("default batch size", func(t *testing.T) {
-		exp := New(driver, anon, &buf, Options{})
+		exp := New(driver, anon, cfg, &buf, Options{})
 		if exp == nil {
 			t.Fatal("New() returned nil")
 		}
@@ -92,21 +106,21 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("custom batch size", func(t *testing.T) {
-		exp := New(driver, anon, &buf, Options{BatchSize: 500})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 500})
 		if exp.batchSize != 500 {
 			t.Errorf("batchSize = %d, want 500", exp.batchSize)
 		}
 	})
 
 	t.Run("zero batch size uses default", func(t *testing.T) {
-		exp := New(driver, anon, &buf, Options{BatchSize: 0})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 0})
 		if exp.batchSize != DefaultBatchSize {
 			t.Errorf("batchSize = %d, want %d", exp.batchSize, DefaultBatchSize)
 		}
 	})
 
 	t.Run("negative batch size uses default", func(t *testing.T) {
-		exp := New(driver, anon, &buf, Options{BatchSize: -10})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: -10})
 		if exp.batchSize != DefaultBatchSize {
 			t.Errorf("batchSize = %d, want %d", exp.batchSize, DefaultBatchSize)
 		}
@@ -125,7 +139,7 @@ func TestExport(t *testing.T) {
 		anon := anonymiser.New(cfg)
 		var buf bytes.Buffer
 
-		exp := New(driver, anon, &buf, Options{BatchSize: 10})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 		tables := []schema.TableInfo{
 			{
@@ -179,7 +193,7 @@ func TestExport(t *testing.T) {
 		anon := anonymiser.New(cfg)
 		var buf bytes.Buffer
 
-		exp := New(driver, anon, &buf, Options{BatchSize: 10})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 		tables := []schema.TableInfo{
 			{
@@ -229,7 +243,7 @@ func TestExport(t *testing.T) {
 		anon := anonymiser.New(cfg)
 		var buf bytes.Buffer
 
-		exp := New(driver, anon, &buf, Options{BatchSize: 10})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 		tables := []schema.TableInfo{
 			{
@@ -281,7 +295,7 @@ func TestExport(t *testing.T) {
 		anon := anonymiser.New(cfg)
 		var buf bytes.Buffer
 
-		exp := New(driver, anon, &buf, Options{BatchSize: 10})
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 		tables := []schema.TableInfo{
 			{
@@ -329,7 +343,7 @@ func TestExport_DatabaseHeaders(t *testing.T) {
 			anon := anonymiser.New(cfg)
 			var buf bytes.Buffer
 
-			exp := New(driver, anon, &buf, Options{})
+			exp := New(driver, anon, cfg, &buf, Options{})
 			err := exp.Export([]schema.TableInfo{})
 
 			if err != nil {
@@ -358,7 +372,7 @@ func TestExport_StreamError(t *testing.T) {
 	anon := anonymiser.New(cfg)
 	var buf bytes.Buffer
 
-	exp := New(driver, anon, &buf, Options{})
+	exp := New(driver, anon, cfg, &buf, Options{})
 
 	tables := []schema.TableInfo{
 		{
@@ -560,7 +574,7 @@ func TestGetStats(t *testing.T) {
 	anon := anonymiser.New(cfg)
 	var buf bytes.Buffer
 
-	exp := New(driver, anon, &buf, Options{BatchSize: 10})
+	exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 	tables := []schema.TableInfo{
 		{Name: "users", CreateStmt: "CREATE TABLE users;", Columns: []database.ColumnInfo{{Name: "id"}}},
@@ -609,7 +623,7 @@ func TestExport_WithAnonymisation(t *testing.T) {
 	anon := anonymiser.New(cfg)
 	var buf bytes.Buffer
 
-	exp := New(driver, anon, &buf, Options{BatchSize: 10})
+	exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
 
 	tables := []schema.TableInfo{
 		{
@@ -675,4 +689,333 @@ func TestConstants(t *testing.T) {
 	if BufferSize != 64*1024 {
 		t.Errorf("BufferSize = %d, want %d", BufferSize, 64*1024)
 	}
+}
+
+// mockDriverWithFK implements database.Driver for FK integrity testing
+type mockDriverWithFK struct {
+	mockDriver
+	foreignKeys map[string][]database.ForeignKey // table -> its FKs
+	primaryKeys map[string][]string              // table -> PK columns
+}
+
+func (m *mockDriverWithFK) GetForeignKeys() ([]database.ForeignKey, error) {
+	var fks []database.ForeignKey
+	for _, tableFKs := range m.foreignKeys {
+		fks = append(fks, tableFKs...)
+	}
+	return fks, nil
+}
+
+func (m *mockDriverWithFK) GetPrimaryKey(table string) ([]string, error) {
+	if pks, ok := m.primaryKeys[table]; ok {
+		return pks, nil
+	}
+	return []string{"id"}, nil
+}
+
+func (m *mockDriverWithFK) StreamRows(table string, opts database.StreamOptions, batchSize int, callback database.RowCallback) error {
+	if m.streamErr != nil {
+		return m.streamErr
+	}
+	rows, ok := m.rows[table]
+	if !ok {
+		return nil
+	}
+
+	// Apply FK filters if present
+	var filteredRows []map[string]any
+	for _, row := range rows {
+		include := true
+		for _, filter := range opts.FKFilters {
+			val := row[filter.Column]
+			if val == nil {
+				if !filter.AllowNull {
+					include = false
+					break
+				}
+				continue
+			}
+
+			// Check if value is in allowed values
+			found := false
+			for _, allowed := range filter.AllowedValues {
+				if val == allowed {
+					found = true
+					break
+				}
+			}
+			if !found {
+				include = false
+				break
+			}
+		}
+		if include {
+			filteredRows = append(filteredRows, row)
+		}
+	}
+
+	// Apply limit
+	if opts.Limit > 0 && opts.Limit < len(filteredRows) {
+		filteredRows = filteredRows[:opts.Limit]
+	}
+
+	// Process in batches
+	for i := 0; i < len(filteredRows); i += batchSize {
+		end := i + batchSize
+		if end > len(filteredRows) {
+			end = len(filteredRows)
+		}
+		if err := callback(filteredRows[i:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestExport_ForeignKeyIntegrity(t *testing.T) {
+	trueVal := true
+
+	t.Run("child table filtered by parent retain limit", func(t *testing.T) {
+		driver := &mockDriverWithFK{
+			mockDriver: mockDriver{
+				columns: map[string][]database.ColumnInfo{
+					"users":  {{Name: "id"}, {Name: "name"}},
+					"orders": {{Name: "id"}, {Name: "user_id"}, {Name: "total"}},
+				},
+				rows: map[string][]map[string]any{
+					"users": {
+						{"id": int64(1), "name": "Alice"},
+						{"id": int64(2), "name": "Bob"},
+						{"id": int64(3), "name": "Charlie"},
+					},
+					"orders": {
+						{"id": int64(101), "user_id": int64(1), "total": 100},
+						{"id": int64(102), "user_id": int64(2), "total": 200},
+						{"id": int64(103), "user_id": int64(3), "total": 300},
+						{"id": int64(104), "user_id": int64(1), "total": 150},
+					},
+				},
+			},
+			foreignKeys: map[string][]database.ForeignKey{
+				"orders": {
+					{Table: "orders", Column: "user_id", ReferencedTable: "users", ReferencedColumn: "id"},
+				},
+			},
+			primaryKeys: map[string][]string{
+				"users":  {"id"},
+				"orders": {"id"},
+			},
+		}
+
+		cfg := &config.Config{
+			ForeignKeyIntegrity: &trueVal,
+			Configuration: map[string]*config.TableConfig{
+				"users": {Retain: config.RetainConfig{Count: 2}}, // Only retain 2 users
+			},
+		}
+		anon := anonymiser.New(cfg)
+		var buf bytes.Buffer
+
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
+
+		// Tables must be in dependency order: parents first
+		tables := []schema.TableInfo{
+			{Name: "users", CreateStmt: "CREATE TABLE users;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "name"}}},
+			{Name: "orders", CreateStmt: "CREATE TABLE orders;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "user_id"}, {Name: "total"}}},
+		}
+
+		err := exp.Export(tables)
+		if err != nil {
+			t.Fatalf("Export() error = %v", err)
+		}
+
+		stats := exp.GetStats()
+
+		// Should have 2 users (retained)
+		// Should have 3 orders (user_id 1 and 2 only, user_id 3 excluded)
+		// Note: Orders for user 1: 2 orders, user 2: 1 order = 3 total
+		if stats.RowsExported != 5 { // 2 users + 3 orders
+			t.Errorf("RowsExported = %d, want 5 (2 users + 3 orders)", stats.RowsExported)
+		}
+
+		output := buf.String()
+		// Should NOT contain Charlie (user 3) or order 103
+		if strings.Contains(output, "'Charlie'") {
+			t.Error("Output should not contain 'Charlie' (excluded user)")
+		}
+	})
+
+	t.Run("truncated parent causes empty child", func(t *testing.T) {
+		driver := &mockDriverWithFK{
+			mockDriver: mockDriver{
+				columns: map[string][]database.ColumnInfo{
+					"users":  {{Name: "id"}, {Name: "name"}},
+					"orders": {{Name: "id"}, {Name: "user_id"}},
+				},
+				rows: map[string][]map[string]any{
+					"users": {
+						{"id": int64(1), "name": "Alice"},
+					},
+					"orders": {
+						{"id": int64(101), "user_id": int64(1)},
+					},
+				},
+			},
+			foreignKeys: map[string][]database.ForeignKey{
+				"orders": {
+					{Table: "orders", Column: "user_id", ReferencedTable: "users", ReferencedColumn: "id"},
+				},
+			},
+			primaryKeys: map[string][]string{
+				"users":  {"id"},
+				"orders": {"id"},
+			},
+		}
+
+		cfg := &config.Config{
+			ForeignKeyIntegrity: &trueVal,
+			Configuration: map[string]*config.TableConfig{
+				"users": {Truncate: true}, // No users exported
+			},
+		}
+		anon := anonymiser.New(cfg)
+		var buf bytes.Buffer
+
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
+
+		tables := []schema.TableInfo{
+			{Name: "users", CreateStmt: "CREATE TABLE users;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "name"}}},
+			{Name: "orders", CreateStmt: "CREATE TABLE orders;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "user_id"}}},
+		}
+
+		err := exp.Export(tables)
+		if err != nil {
+			t.Fatalf("Export() error = %v", err)
+		}
+
+		stats := exp.GetStats()
+
+		// Should have 0 rows exported (users truncated, orders filtered out)
+		if stats.RowsExported != 0 {
+			t.Errorf("RowsExported = %d, want 0", stats.RowsExported)
+		}
+	})
+
+	t.Run("table override disables FK integrity", func(t *testing.T) {
+		falseVal := false
+
+		driver := &mockDriverWithFK{
+			mockDriver: mockDriver{
+				columns: map[string][]database.ColumnInfo{
+					"users":      {{Name: "id"}},
+					"audit_logs": {{Name: "id"}, {Name: "user_id"}},
+				},
+				rows: map[string][]map[string]any{
+					"users": {
+						{"id": int64(1)},
+					},
+					"audit_logs": {
+						{"id": int64(101), "user_id": int64(1)},
+						{"id": int64(102), "user_id": int64(2)}, // user 2 doesn't exist
+						{"id": int64(103), "user_id": int64(3)}, // user 3 doesn't exist
+					},
+				},
+			},
+			foreignKeys: map[string][]database.ForeignKey{
+				"audit_logs": {
+					{Table: "audit_logs", Column: "user_id", ReferencedTable: "users", ReferencedColumn: "id"},
+				},
+			},
+			primaryKeys: map[string][]string{
+				"users":      {"id"},
+				"audit_logs": {"id"},
+			},
+		}
+
+		cfg := &config.Config{
+			ForeignKeyIntegrity: &trueVal, // Global enabled
+			Configuration: map[string]*config.TableConfig{
+				"users":      {Retain: config.RetainConfig{Count: 1}},
+				"audit_logs": {ForeignKeyIntegrity: &falseVal}, // Override: disabled
+			},
+		}
+		anon := anonymiser.New(cfg)
+		var buf bytes.Buffer
+
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
+
+		tables := []schema.TableInfo{
+			{Name: "users", CreateStmt: "CREATE TABLE users;", Columns: []database.ColumnInfo{{Name: "id"}}},
+			{Name: "audit_logs", CreateStmt: "CREATE TABLE audit_logs;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "user_id"}}},
+		}
+
+		err := exp.Export(tables)
+		if err != nil {
+			t.Fatalf("Export() error = %v", err)
+		}
+
+		stats := exp.GetStats()
+
+		// Should have all audit_logs because FK integrity is disabled for that table
+		if stats.RowsExported != 4 { // 1 user + 3 audit_logs
+			t.Errorf("RowsExported = %d, want 4 (1 user + 3 audit_logs)", stats.RowsExported)
+		}
+	})
+
+	t.Run("null foreign keys allowed", func(t *testing.T) {
+		driver := &mockDriverWithFK{
+			mockDriver: mockDriver{
+				columns: map[string][]database.ColumnInfo{
+					"users":  {{Name: "id"}},
+					"orders": {{Name: "id"}, {Name: "user_id"}},
+				},
+				rows: map[string][]map[string]any{
+					"users": {
+						{"id": int64(1)},
+					},
+					"orders": {
+						{"id": int64(101), "user_id": int64(1)},
+						{"id": int64(102), "user_id": nil}, // NULL FK should be allowed
+					},
+				},
+			},
+			foreignKeys: map[string][]database.ForeignKey{
+				"orders": {
+					{Table: "orders", Column: "user_id", ReferencedTable: "users", ReferencedColumn: "id"},
+				},
+			},
+			primaryKeys: map[string][]string{
+				"users":  {"id"},
+				"orders": {"id"},
+			},
+		}
+
+		cfg := &config.Config{
+			ForeignKeyIntegrity: &trueVal,
+			Configuration: map[string]*config.TableConfig{
+				"users": {Retain: config.RetainConfig{Count: 1}},
+			},
+		}
+		anon := anonymiser.New(cfg)
+		var buf bytes.Buffer
+
+		exp := New(driver, anon, cfg, &buf, Options{BatchSize: 10})
+
+		tables := []schema.TableInfo{
+			{Name: "users", CreateStmt: "CREATE TABLE users;", Columns: []database.ColumnInfo{{Name: "id"}}},
+			{Name: "orders", CreateStmt: "CREATE TABLE orders;", Columns: []database.ColumnInfo{{Name: "id"}, {Name: "user_id"}}},
+		}
+
+		err := exp.Export(tables)
+		if err != nil {
+			t.Fatalf("Export() error = %v", err)
+		}
+
+		stats := exp.GetStats()
+
+		// Should have both orders (one with user_id=1, one with user_id=NULL)
+		if stats.RowsExported != 3 { // 1 user + 2 orders
+			t.Errorf("RowsExported = %d, want 3 (1 user + 2 orders)", stats.RowsExported)
+		}
+	})
 }

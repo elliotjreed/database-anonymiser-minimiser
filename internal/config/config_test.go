@@ -587,3 +587,148 @@ func TestListTables(t *testing.T) {
 		}
 	})
 }
+
+func TestShouldEnforceFKIntegrity(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	t.Run("global enabled, no table override", func(t *testing.T) {
+		cfg := &Config{
+			ForeignKeyIntegrity: &trueVal,
+			Configuration: map[string]*TableConfig{
+				"users": {},
+			},
+		}
+
+		if !cfg.ShouldEnforceFKIntegrity("users") {
+			t.Error("ShouldEnforceFKIntegrity(users) = false, want true (global enabled)")
+		}
+	})
+
+	t.Run("global disabled, no table override", func(t *testing.T) {
+		cfg := &Config{
+			ForeignKeyIntegrity: &falseVal,
+			Configuration: map[string]*TableConfig{
+				"users": {},
+			},
+		}
+
+		if cfg.ShouldEnforceFKIntegrity("users") {
+			t.Error("ShouldEnforceFKIntegrity(users) = true, want false (global disabled)")
+		}
+	})
+
+	t.Run("global enabled, table override disabled", func(t *testing.T) {
+		cfg := &Config{
+			ForeignKeyIntegrity: &trueVal,
+			Configuration: map[string]*TableConfig{
+				"audit_logs": {ForeignKeyIntegrity: &falseVal},
+			},
+		}
+
+		if cfg.ShouldEnforceFKIntegrity("audit_logs") {
+			t.Error("ShouldEnforceFKIntegrity(audit_logs) = true, want false (table override)")
+		}
+	})
+
+	t.Run("global disabled, table override enabled", func(t *testing.T) {
+		cfg := &Config{
+			ForeignKeyIntegrity: &falseVal,
+			Configuration: map[string]*TableConfig{
+				"orders": {ForeignKeyIntegrity: &trueVal},
+			},
+		}
+
+		if !cfg.ShouldEnforceFKIntegrity("orders") {
+			t.Error("ShouldEnforceFKIntegrity(orders) = false, want true (table override)")
+		}
+	})
+
+	t.Run("global nil, table override enabled", func(t *testing.T) {
+		cfg := &Config{
+			Configuration: map[string]*TableConfig{
+				"orders": {ForeignKeyIntegrity: &trueVal},
+			},
+		}
+
+		if !cfg.ShouldEnforceFKIntegrity("orders") {
+			t.Error("ShouldEnforceFKIntegrity(orders) = false, want true (table enabled)")
+		}
+	})
+
+	t.Run("both nil defaults to false", func(t *testing.T) {
+		cfg := &Config{
+			Configuration: map[string]*TableConfig{
+				"users": {},
+			},
+		}
+
+		if cfg.ShouldEnforceFKIntegrity("users") {
+			t.Error("ShouldEnforceFKIntegrity(users) = true, want false (default)")
+		}
+	})
+
+	t.Run("table not in config defaults to global", func(t *testing.T) {
+		cfg := &Config{
+			ForeignKeyIntegrity: &trueVal,
+		}
+
+		if !cfg.ShouldEnforceFKIntegrity("unknown_table") {
+			t.Error("ShouldEnforceFKIntegrity(unknown_table) = false, want true (global)")
+		}
+	})
+
+	t.Run("nil config defaults to false", func(t *testing.T) {
+		cfg := &Config{}
+
+		if cfg.ShouldEnforceFKIntegrity("users") {
+			t.Error("ShouldEnforceFKIntegrity(users) on empty config = true, want false")
+		}
+	})
+}
+
+func TestForeignKeyIntegrity_YAML(t *testing.T) {
+	content := `
+foreign_key_integrity: true
+connection:
+  type: sqlite
+  file: /tmp/test.db
+configuration:
+  users:
+    retain: 100
+  orders:
+    columns:
+      customer_email: "{{faker.email}}"
+  audit_logs:
+    foreign_key_integrity: false
+    retain: 1000
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Check global setting
+	if cfg.ForeignKeyIntegrity == nil || !*cfg.ForeignKeyIntegrity {
+		t.Error("ForeignKeyIntegrity should be true")
+	}
+
+	// Check table without override
+	if !cfg.ShouldEnforceFKIntegrity("users") {
+		t.Error("users should enforce FK integrity (global)")
+	}
+	if !cfg.ShouldEnforceFKIntegrity("orders") {
+		t.Error("orders should enforce FK integrity (global)")
+	}
+
+	// Check table with override
+	if cfg.ShouldEnforceFKIntegrity("audit_logs") {
+		t.Error("audit_logs should NOT enforce FK integrity (override)")
+	}
+}

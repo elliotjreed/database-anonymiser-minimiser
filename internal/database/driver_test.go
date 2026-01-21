@@ -6,9 +6,9 @@ import (
 
 func TestNewDriver(t *testing.T) {
 	tests := []struct {
-		name    string
-		dbType  string
-		wantErr bool
+		name     string
+		dbType   string
+		wantErr  bool
 		wantType string
 	}{
 		{

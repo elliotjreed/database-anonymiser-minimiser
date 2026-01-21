@@ -1,6 +1,13 @@
 # Database Anonymiser & Minimiser Configuration
 # This file defines how to connect to the database and what transformations to apply.
 
+# Foreign key integrity enforcement (optional, default: false)
+# When enabled, child tables are automatically filtered to only include rows
+# that reference parent rows which exist in the export. This is useful when
+# using 'retain' limits on parent tables - child tables will only include
+# rows with valid foreign key references.
+foreign_key_integrity: false
+
 # Database connection settings
 connection:
   # Database type: mysql, postgres, or sqlite
@@ -29,7 +36,9 @@ configuration:
     truncate: true
 
   # Audit logs: keep only recent entries (count-based retain)
+  # Override global FK integrity setting for this table
   audit_logs:
+    foreign_key_integrity: false  # Export all audit_logs regardless of FK references
     retain: 1000  # Keep only 1000 rows
 
   # Users table: anonymise PII

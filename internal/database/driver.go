@@ -10,9 +10,18 @@ import (
 
 // StreamOptions contains options for streaming rows from a table.
 type StreamOptions struct {
-	Limit      int       // Maximum number of rows to fetch (0 = unlimited)
-	ColumnName string    // Column name for date-based filtering
-	AfterDate  time.Time // Only fetch rows where ColumnName > AfterDate
+	Limit      int        // Maximum number of rows to fetch (0 = unlimited)
+	ColumnName string     // Column name for date-based filtering
+	AfterDate  time.Time  // Only fetch rows where ColumnName > AfterDate
+	FKFilters  []FKFilter // Foreign key filters for integrity enforcement
+}
+
+// FKFilter specifies a filter for foreign key integrity.
+// Only rows where the Column value is in AllowedValues (or NULL if AllowNull) will be included.
+type FKFilter struct {
+	Column        string // Column name to filter on
+	AllowedValues []any  // Allowed values for this column
+	AllowNull     bool   // Whether NULL values are allowed
 }
 
 // ForeignKey represents a foreign key relationship.
@@ -54,12 +63,19 @@ type Driver interface {
 	// GetForeignKeys returns all foreign key relationships in the database.
 	GetForeignKeys() ([]ForeignKey, error)
 
+	// GetPrimaryKey returns the primary key column(s) for a table.
+	GetPrimaryKey(table string) ([]string, error)
+
 	// StreamRows streams rows from a table in batches.
 	// The opts parameter controls row filtering (by count or date).
 	StreamRows(table string, opts StreamOptions, batchSize int, callback RowCallback) error
 
 	// GetRowCount returns the number of rows in a table.
 	GetRowCount(table string) (int64, error)
+
+	// GetFilteredRowCount returns the number of rows that would be exported given the stream options.
+	// This is used for dry-run mode to show expected row counts.
+	GetFilteredRowCount(table string, opts StreamOptions) (int64, error)
 
 	// QuoteIdentifier quotes an identifier (table/column name) for safe use in SQL.
 	QuoteIdentifier(name string) string

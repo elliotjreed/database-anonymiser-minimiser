@@ -140,7 +140,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	// Dry run mode
 	if dryRun {
-		return printDryRun(sortedTables, anon)
+		return printDryRun(sortedTables, anon, driver)
 	}
 
 	// Determine output
@@ -164,7 +164,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Exporting %d tables...\n", len(sortedTables))
 	}
 
-	exp := exporter.New(driver, anon, output, exporter.Options{
+	exp := exporter.New(driver, anon, cfg, output, exporter.Options{
 		Verbose:   verbose,
 		BatchSize: 1000,
 	})
@@ -198,24 +198,48 @@ func runExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printDryRun(tables []schema.TableInfo, anon *anonymiser.Anonymiser) error {
+func printDryRun(tables []schema.TableInfo, anon *anonymiser.Anonymiser, driver database.Driver) error {
 	fmt.Println("=== DRY RUN MODE ===")
 	fmt.Printf("Found %d tables\n\n", len(tables))
 
+	var totalExpectedRows int64
+
 	for _, table := range tables {
 		fmt.Printf("Table: %s\n", table.Name)
-		fmt.Printf("  Rows: %d\n", table.RowCount)
+		fmt.Printf("  Rows in database: %d\n", table.RowCount)
+
+		var expectedRows int64
 
 		if anon.ShouldTruncate(table.Name) {
 			fmt.Println("  Action: TRUNCATE (no data will be exported)")
+			expectedRows = 0
 		} else if retainCfg := anon.GetRetainConfig(table.Name); retainCfg.IsDateBased() {
 			fmt.Printf("  Action: RETAIN rows where %s > %s\n",
 				retainCfg.ColumnName, retainCfg.AfterDate.Format("2006-01-02"))
+
+			opts := database.StreamOptions{
+				ColumnName: retainCfg.ColumnName,
+				AfterDate:  retainCfg.AfterDate,
+			}
+			count, err := driver.GetFilteredRowCount(table.Name, opts)
+			if err != nil {
+				fmt.Printf("  Expected rows: (error: %v)\n", err)
+			} else {
+				expectedRows = count
+			}
 		} else if retainCfg.IsCountBased() {
 			fmt.Printf("  Action: RETAIN %d rows\n", retainCfg.Count)
+			expectedRows = int64(retainCfg.Count)
+			if table.RowCount < expectedRows {
+				expectedRows = table.RowCount
+			}
 		} else {
 			fmt.Println("  Action: FULL EXPORT")
+			expectedRows = table.RowCount
 		}
+
+		fmt.Printf("  Expected rows in export: %d\n", expectedRows)
+		totalExpectedRows += expectedRows
 
 		if cols := anon.GetAnonymisedColumns(table.Name); len(cols) > 0 {
 			fmt.Printf("  Anonymised columns: %v\n", cols)
@@ -223,6 +247,10 @@ func printDryRun(tables []schema.TableInfo, anon *anonymiser.Anonymiser) error {
 
 		fmt.Println()
 	}
+
+	fmt.Println("=== SUMMARY ===")
+	fmt.Printf("Total tables: %d\n", len(tables))
+	fmt.Printf("Total expected rows in export: %d\n", totalExpectedRows)
 
 	return nil
 }

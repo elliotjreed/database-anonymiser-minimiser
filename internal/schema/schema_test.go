@@ -10,17 +10,17 @@ import (
 
 // mockDriver implements database.Driver for testing
 type mockDriver struct {
-	tables     []string
-	schemas    map[string]string
-	columns    map[string][]database.ColumnInfo
-	rowCounts  map[string]int64
+	tables      []string
+	schemas     map[string]string
+	columns     map[string][]database.ColumnInfo
+	rowCounts   map[string]int64
 	foreignKeys []database.ForeignKey
 
 	// Error injection
-	getTablesErr     error
-	getSchemaErr     error
-	getColumnsErr    error
-	getRowCountErr   error
+	getTablesErr      error
+	getSchemaErr      error
+	getColumnsErr     error
+	getRowCountErr    error
 	getForeignKeysErr error
 }
 
@@ -61,6 +61,10 @@ func (m *mockDriver) GetForeignKeys() ([]database.ForeignKey, error) {
 	return m.foreignKeys, nil
 }
 
+func (m *mockDriver) GetPrimaryKey(table string) ([]string, error) {
+	return []string{"id"}, nil
+}
+
 func (m *mockDriver) StreamRows(table string, opts database.StreamOptions, batchSize int, callback database.RowCallback) error {
 	return nil
 }
@@ -81,6 +85,17 @@ func (m *mockDriver) QuoteIdentifier(name string) string {
 
 func (m *mockDriver) GetDatabaseType() string {
 	return "mock"
+}
+
+func (m *mockDriver) GetFilteredRowCount(table string, opts database.StreamOptions) (int64, error) {
+	count, err := m.GetRowCount(table)
+	if err != nil {
+		return 0, err
+	}
+	if opts.Limit > 0 && count > int64(opts.Limit) {
+		return int64(opts.Limit), nil
+	}
+	return count, nil
 }
 
 func TestNewAnalyser(t *testing.T) {
@@ -190,8 +205,8 @@ func TestGetAllTables(t *testing.T) {
 
 	t.Run("GetColumns error", func(t *testing.T) {
 		driver := &mockDriver{
-			tables:  []string{"users"},
-			schemas: map[string]string{"users": "CREATE TABLE users;"},
+			tables:        []string{"users"},
+			schemas:       map[string]string{"users": "CREATE TABLE users;"},
 			getColumnsErr: errors.New("columns error"),
 		}
 
@@ -205,9 +220,9 @@ func TestGetAllTables(t *testing.T) {
 
 	t.Run("GetRowCount error", func(t *testing.T) {
 		driver := &mockDriver{
-			tables:  []string{"users"},
-			schemas: map[string]string{"users": "CREATE TABLE users;"},
-			columns: map[string][]database.ColumnInfo{"users": {}},
+			tables:         []string{"users"},
+			schemas:        map[string]string{"users": "CREATE TABLE users;"},
+			columns:        map[string][]database.ColumnInfo{"users": {}},
 			getRowCountErr: errors.New("count error"),
 		}
 

@@ -7,6 +7,7 @@ A CLI tool for exporting database schemas and data while anonymising sensitive i
 - **Multi-database support**: MySQL, PostgreSQL, and SQLite
 - **Data anonymisation**: Replace sensitive data with realistic fake values using faker templates
 - **Data minimisation**: Truncate tables, retain a row count, or filter by date
+- **Foreign key integrity**: Automatically filter child tables to only include rows with valid parent references
 - **Foreign key aware**: Automatically orders tables by dependencies for valid imports
 - **Memory efficient**: Streams data in configurable batches (default: 1000 rows)
 - **Flexible configuration**: YAML or JSON config files
@@ -108,6 +109,51 @@ dbmask -c config.yaml --dry-run
 # Using JSON config
 dbmask -c config.json -o dump.sql
 ```
+
+### Dry Run Mode
+
+The `--dry-run` flag previews what would happen during an export without actually executing it. This is useful for verifying your configuration before running a full export.
+
+The dry run output shows:
+- **Rows in database**: The actual row count in each table
+- **Action**: What operation will be performed (TRUNCATE, RETAIN, or FULL EXPORT)
+- **Expected rows in export**: The number of rows that would be included in the final export
+- **Anonymised columns**: Which columns will have their values replaced
+- **Summary**: Total tables and total expected rows across all tables
+
+**Example output:**
+
+```
+=== DRY RUN MODE ===
+Found 4 tables
+
+Table: users
+  Rows in database: 10000
+  Action: RETAIN 100 rows
+  Expected rows in export: 100
+  Anonymised columns: [email name phone]
+
+Table: orders
+  Rows in database: 50000
+  Action: RETAIN rows where created_at > 2024-01-01
+  Expected rows in export: 12345
+
+Table: sessions
+  Rows in database: 25000
+  Action: TRUNCATE (no data will be exported)
+  Expected rows in export: 0
+
+Table: products
+  Rows in database: 500
+  Action: FULL EXPORT
+  Expected rows in export: 500
+
+=== SUMMARY ===
+Total tables: 4
+Total expected rows in export: 12945
+```
+
+This helps you understand the size of the resulting export and verify that your retention rules are configured correctly.
 
 ### Sync Command
 
@@ -281,6 +327,105 @@ configuration:
       notes: "Order notes redacted"
 ```
 
+### Foreign Key Integrity
+
+When using `retain` limits on parent tables, child tables may end up with orphaned foreign key references. The `foreign_key_integrity` option automatically filters child tables to only include rows that reference parent rows which exist in the export.
+
+#### Global Setting
+
+Enable foreign key integrity enforcement for all tables:
+
+```yaml
+foreign_key_integrity: true
+
+connection:
+  type: mysql
+  host: localhost
+  database_name: myapp
+
+configuration:
+  users:
+    retain: 100  # Only export 100 users
+
+  orders:
+    # Only orders referencing the 100 retained users will be exported
+    columns:
+      customer_email: "{{faker.email}}"
+
+  order_items:
+    # Only order_items for the filtered orders will be exported
+```
+
+#### Per-Table Override
+
+You can override the global setting for specific tables. This is useful for tables like audit logs where you want all records regardless of FK references:
+
+```yaml
+foreign_key_integrity: true  # Global: enabled
+
+configuration:
+  users:
+    retain: 100
+
+  orders:
+    # Will be filtered to only orders for retained users (inherits global)
+
+  audit_logs:
+    foreign_key_integrity: false  # Override: export all audit_logs
+    retain: 1000
+```
+
+#### How It Works
+
+1. Tables are processed in topological order (parent tables first)
+2. As each parent table is exported, its primary key values are tracked
+3. Child tables are filtered using `WHERE fk_column IN (tracked_values)`
+4. NULL foreign key values are always allowed (valid in SQL)
+5. Self-referencing tables skip FK integrity on the self-reference
+
+#### Example: E-commerce Database
+
+```yaml
+foreign_key_integrity: true
+
+configuration:
+  # Parent table: only 50 customers
+  customers:
+    retain: 50
+    columns:
+      email: "{{faker.email}}"
+      name: "{{faker.name}}"
+
+  # Child table: only orders for the 50 customers
+  orders:
+    columns:
+      shipping_address: "{{faker.address}}"
+
+  # Grandchild table: only items for the filtered orders
+  order_items:
+    # No additional config needed - automatically filtered
+
+  # Override: keep all products (no FK to customers)
+  products:
+    # Full export - no FK integrity needed
+```
+
+**Result:**
+- 50 customers exported
+- Only orders belonging to those 50 customers
+- Only order_items for those orders
+- All products (no FK relationship to filter)
+
+#### Edge Cases
+
+| Scenario | Behaviour |
+|----------|-----------|
+| Parent table truncated | Child table gets 0 rows (no valid references) |
+| NULL foreign key | Always allowed (valid in SQL) |
+| Self-referencing table | Self-references are not filtered |
+| Multiple FK columns | All FK filters are applied (AND logic) |
+| No FK relationships | Table exported normally |
+
 ### Available Faker Functions
 
 | Function | Description | Example Output |
@@ -311,6 +456,9 @@ The anonymiser maintains a consistency map to preserve referential integrity. If
 Here's a comprehensive configuration for a typical web application:
 
 ```yaml
+# Ensure child tables only reference exported parent rows
+foreign_key_integrity: true
+
 connection:
   type: mysql
   host: production-db.example.com
@@ -331,7 +479,9 @@ configuration:
     truncate: true
 
   # Minimise: Keep limited audit history (count-based)
+  # Override FK integrity to keep all audit entries regardless of user references
   audit_logs:
+    foreign_key_integrity: false
     retain: 5000
 
   # Minimise: Keep recent events only (date-based)
@@ -558,6 +708,8 @@ The release workflow will automatically:
 │   ├── anonymiser/
 │   │   ├── anonymiser.go    # Anonymisation logic
 │   │   └── faker.go         # Faker function registry
+│   ├── fktracker/
+│   │   └── tracker.go       # Foreign key value tracking
 │   └── exporter/
 │       └── exporter.go      # SQL dump generation
 ├── config.example.yaml      # Example configuration
@@ -573,8 +725,9 @@ The tool follows a pipeline architecture:
 2. **Driver** - Connects to the database using the appropriate driver (MySQL, PostgreSQL, or SQLite)
 3. **Schema** - Extracts table schemas and analyzes foreign key relationships
 4. **Analyser** - Topologically sorts tables by FK dependencies to ensure valid import order
-5. **Anonymiser** - Applies transformation rules to each row (faker templates, static values, NULL)
-6. **Exporter** - Streams rows in batches and generates SQL statements
+5. **FK Tracker** - Tracks exported primary key values for foreign key integrity enforcement
+6. **Anonymiser** - Applies transformation rules to each row (faker templates, static values, NULL)
+7. **Exporter** - Streams rows in batches, applies FK filters, and generates SQL statements
 
 ### Adding a New Faker Function
 

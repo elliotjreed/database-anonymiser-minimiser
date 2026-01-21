@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/elliotjreed/database-anonymiser-minimiser/internal/anonymiser"
+	"github.com/elliotjreed/database-anonymiser-minimiser/internal/config"
 	"github.com/elliotjreed/database-anonymiser-minimiser/internal/database"
+	"github.com/elliotjreed/database-anonymiser-minimiser/internal/fktracker"
 	"github.com/elliotjreed/database-anonymiser-minimiser/internal/schema"
 )
 
@@ -31,11 +33,17 @@ type Stats struct {
 type Exporter struct {
 	driver     database.Driver
 	anonymiser *anonymiser.Anonymiser
+	config     *config.Config
 	writer     *bufio.Writer
 	verbose    bool
 	batchSize  int
 	dbType     string
 	stats      Stats
+
+	// FK integrity tracking
+	fkTracker *fktracker.Tracker
+	fkMap     map[string][]database.ForeignKey // table -> its foreign keys
+	pkColumns map[string][]string              // table -> primary key columns
 }
 
 // Options configures the exporter behavior.
@@ -45,7 +53,7 @@ type Options struct {
 }
 
 // New creates a new Exporter instance.
-func New(driver database.Driver, anon *anonymiser.Anonymiser, output io.Writer, opts Options) *Exporter {
+func New(driver database.Driver, anon *anonymiser.Anonymiser, cfg *config.Config, output io.Writer, opts Options) *Exporter {
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
@@ -54,15 +62,24 @@ func New(driver database.Driver, anon *anonymiser.Anonymiser, output io.Writer, 
 	return &Exporter{
 		driver:     driver,
 		anonymiser: anon,
+		config:     cfg,
 		writer:     bufio.NewWriterSize(output, BufferSize),
 		verbose:    opts.Verbose,
 		batchSize:  batchSize,
 		dbType:     driver.GetDatabaseType(),
+		fkTracker:  fktracker.NewTracker(),
+		fkMap:      make(map[string][]database.ForeignKey),
+		pkColumns:  make(map[string][]string),
 	}
 }
 
 // Export performs the full database export.
 func (e *Exporter) Export(tables []schema.TableInfo) error {
+	// Load FK relationships if FK integrity is enabled for any table
+	if err := e.loadFKRelationships(tables); err != nil {
+		return fmt.Errorf("failed to load foreign key relationships: %w", err)
+	}
+
 	// Write header
 	if err := e.writeHeader(); err != nil {
 		return err
@@ -85,6 +102,53 @@ func (e *Exporter) Export(tables []schema.TableInfo) error {
 	}
 
 	return e.writer.Flush()
+}
+
+// loadFKRelationships loads foreign key information and primary keys for tables.
+func (e *Exporter) loadFKRelationships(tables []schema.TableInfo) error {
+	// Check if FK integrity is enabled globally or for any table
+	fkIntegrityEnabled := false
+	if e.config.ForeignKeyIntegrity != nil && *e.config.ForeignKeyIntegrity {
+		fkIntegrityEnabled = true
+	}
+	if !fkIntegrityEnabled {
+		for _, table := range tables {
+			if e.config.ShouldEnforceFKIntegrity(table.Name) {
+				fkIntegrityEnabled = true
+				break
+			}
+		}
+	}
+
+	if !fkIntegrityEnabled {
+		return nil // No FK integrity needed
+	}
+
+	// Load all foreign keys
+	fks, err := e.driver.GetForeignKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get foreign keys: %w", err)
+	}
+
+	// Build FK map (table -> its foreign keys)
+	for _, fk := range fks {
+		e.fkMap[fk.Table] = append(e.fkMap[fk.Table], fk)
+	}
+
+	// Load primary keys for all tables
+	for _, table := range tables {
+		pkCols, err := e.driver.GetPrimaryKey(table.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get primary key for table %s: %w", table.Name, err)
+		}
+		e.pkColumns[table.Name] = pkCols
+	}
+
+	if e.verbose && len(fks) > 0 {
+		fmt.Printf("Loaded %d foreign key relationships for FK integrity enforcement\n", len(fks))
+	}
+
+	return nil
 }
 
 // writeHeader writes the SQL dump header.
@@ -214,11 +278,24 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 		AfterDate:  retainCfg.AfterDate,
 	}
 
+	// Build FK filters if FK integrity is enabled for this table
+	if e.config.ShouldEnforceFKIntegrity(table.Name) {
+		fkFilters := e.buildFKFilters(table.Name)
+		streamOpts.FKFilters = fkFilters
+
+		if e.verbose && len(fkFilters) > 0 {
+			fmt.Printf("  Applying %d FK filters for integrity enforcement\n", len(fkFilters))
+		}
+	}
+
 	// Get column names
 	columnNames := make([]string, len(table.Columns))
 	for i, col := range table.Columns {
 		columnNames[i] = col.Name
 	}
+
+	// Get primary key columns for tracking
+	pkCols := e.pkColumns[table.Name]
 
 	// Stream and export rows
 	var batch []map[string]any
@@ -227,6 +304,14 @@ func (e *Exporter) exportTable(table schema.TableInfo) error {
 		for _, row := range rows {
 			// Apply anonymization
 			anonRow := e.anonymiser.AnonymiseRow(table.Name, row)
+
+			// Track primary key values for FK integrity (use anonymised values)
+			for _, pkCol := range pkCols {
+				if val, ok := anonRow[pkCol]; ok {
+					e.fkTracker.RecordValue(table.Name, pkCol, val)
+				}
+			}
+
 			batch = append(batch, anonRow)
 			rowCount++
 
@@ -351,4 +436,33 @@ func (e *Exporter) escapeString(s string) string {
 // GetStats returns the export statistics.
 func (e *Exporter) GetStats() Stats {
 	return e.stats
+}
+
+// buildFKFilters builds FK filters for a table based on exported parent table values.
+func (e *Exporter) buildFKFilters(tableName string) []database.FKFilter {
+	fks, ok := e.fkMap[tableName]
+	if !ok {
+		return nil
+	}
+
+	var filters []database.FKFilter
+	for _, fk := range fks {
+		// Skip self-referencing FKs (table references itself)
+		if fk.ReferencedTable == tableName {
+			continue
+		}
+
+		// Get exported values from the parent table
+		allowedValues := e.fkTracker.GetExportedValues(fk.ReferencedTable, fk.ReferencedColumn)
+
+		filter := database.FKFilter{
+			Column:        fk.Column,
+			AllowedValues: allowedValues,
+			AllowNull:     true, // NULL FK values are always valid in SQL
+		}
+
+		filters = append(filters, filter)
+	}
+
+	return filters
 }

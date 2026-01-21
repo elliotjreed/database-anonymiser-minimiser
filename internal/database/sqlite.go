@@ -148,6 +148,38 @@ func (d *SQLiteDriver) GetForeignKeys() ([]ForeignKey, error) {
 	return fks, nil
 }
 
+// GetPrimaryKey returns the primary key column(s) for a table.
+func (d *SQLiteDriver) GetPrimaryKey(table string) ([]string, error) {
+	query := fmt.Sprintf("PRAGMA table_info(%s)", d.QuoteIdentifier(table))
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query table info: %w", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull int
+		var dfltValue sql.NullString
+		var pk int
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &dfltValue, &pk); err != nil {
+			return nil, fmt.Errorf("failed to scan table info: %w", err)
+		}
+
+		// pk > 0 indicates the column is part of the primary key
+		// The value indicates the position in a composite primary key
+		if pk > 0 {
+			columns = append(columns, name)
+		}
+	}
+
+	return columns, rows.Err()
+}
+
 // StreamRows streams rows from a table in batches.
 func (d *SQLiteDriver) StreamRows(table string, opts StreamOptions, batchSize int, callback RowCallback) error {
 	// Get column names first
@@ -167,11 +199,30 @@ func (d *SQLiteDriver) StreamRows(table string, opts StreamOptions, batchSize in
 		d.QuoteIdentifier(table))
 
 	var args []any
+	var whereClauses []string
 
 	// Add date-based WHERE clause if specified
 	if opts.ColumnName != "" && !opts.AfterDate.IsZero() {
-		query += fmt.Sprintf(" WHERE %s > ?", d.QuoteIdentifier(opts.ColumnName))
+		whereClauses = append(whereClauses, fmt.Sprintf("%s > ?", d.QuoteIdentifier(opts.ColumnName)))
 		args = append(args, opts.AfterDate.Format("2006-01-02 15:04:05"))
+	}
+
+	// Add FK filter WHERE clauses
+	for _, filter := range opts.FKFilters {
+		if len(filter.AllowedValues) == 0 && !filter.AllowNull {
+			// No allowed values and NULL not allowed means no rows can match
+			return nil
+		}
+
+		clause := d.buildFKFilterClause(filter, &args)
+		if clause != "" {
+			whereClauses = append(whereClauses, clause)
+		}
+	}
+
+	// Combine WHERE clauses
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
 	// Add LIMIT clause if specified
@@ -248,6 +299,51 @@ func (d *SQLiteDriver) GetRowCount(table string) (int64, error) {
 	return count, nil
 }
 
+// GetFilteredRowCount returns the number of rows that would be exported given the stream options.
+func (d *SQLiteDriver) GetFilteredRowCount(table string, opts StreamOptions) (int64, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", d.QuoteIdentifier(table))
+
+	var args []any
+	var whereClauses []string
+
+	// Add date-based WHERE clause if specified
+	if opts.ColumnName != "" && !opts.AfterDate.IsZero() {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s > ?", d.QuoteIdentifier(opts.ColumnName)))
+		args = append(args, opts.AfterDate.Format("2006-01-02 15:04:05"))
+	}
+
+	// Add FK filter WHERE clauses
+	for _, filter := range opts.FKFilters {
+		if len(filter.AllowedValues) == 0 && !filter.AllowNull {
+			// No allowed values and NULL not allowed means no rows can match
+			return 0, nil
+		}
+
+		clause := d.buildFKFilterClause(filter, &args)
+		if clause != "" {
+			whereClauses = append(whereClauses, clause)
+		}
+	}
+
+	// Combine WHERE clauses
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	var count int64
+	err := d.db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count filtered rows: %w", err)
+	}
+
+	// Apply limit if specified
+	if opts.Limit > 0 && count > int64(opts.Limit) {
+		return int64(opts.Limit), nil
+	}
+
+	return count, nil
+}
+
 // QuoteIdentifier quotes an identifier for SQLite.
 func (d *SQLiteDriver) QuoteIdentifier(name string) string {
 	return "\"" + strings.ReplaceAll(name, "\"", "\"\"") + "\""
@@ -256,4 +352,32 @@ func (d *SQLiteDriver) QuoteIdentifier(name string) string {
 // GetDatabaseType returns "sqlite".
 func (d *SQLiteDriver) GetDatabaseType() string {
 	return "sqlite"
+}
+
+// buildFKFilterClause builds a WHERE clause for a foreign key filter.
+func (d *SQLiteDriver) buildFKFilterClause(filter FKFilter, args *[]any) string {
+	quotedCol := d.QuoteIdentifier(filter.Column)
+
+	if len(filter.AllowedValues) == 0 {
+		// Only NULL is allowed
+		if filter.AllowNull {
+			return fmt.Sprintf("%s IS NULL", quotedCol)
+		}
+		return "" // No values allowed, will be handled by caller
+	}
+
+	// Build IN clause
+	placeholders := make([]string, len(filter.AllowedValues))
+	for i, v := range filter.AllowedValues {
+		placeholders[i] = "?"
+		*args = append(*args, v)
+	}
+
+	inClause := fmt.Sprintf("%s IN (%s)", quotedCol, strings.Join(placeholders, ", "))
+
+	if filter.AllowNull {
+		return fmt.Sprintf("(%s OR %s IS NULL)", inClause, quotedCol)
+	}
+
+	return inClause
 }

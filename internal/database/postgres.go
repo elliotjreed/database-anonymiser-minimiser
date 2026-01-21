@@ -185,6 +185,32 @@ func (d *PostgresDriver) GetForeignKeys() ([]ForeignKey, error) {
 	return fks, rows.Err()
 }
 
+// GetPrimaryKey returns the primary key column(s) for a table.
+func (d *PostgresDriver) GetPrimaryKey(table string) ([]string, error) {
+	query := `SELECT a.attname
+              FROM pg_index i
+              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+              WHERE i.indrelid = $1::regclass AND i.indisprimary
+              ORDER BY array_position(i.indkey, a.attnum)`
+
+	rows, err := d.db.Query(query, table)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query primary key: %w", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			return nil, fmt.Errorf("failed to scan primary key column: %w", err)
+		}
+		columns = append(columns, col)
+	}
+
+	return columns, rows.Err()
+}
+
 // StreamRows streams rows from a table in batches.
 func (d *PostgresDriver) StreamRows(table string, opts StreamOptions, batchSize int, callback RowCallback) error {
 	// Get column names first
@@ -204,11 +230,32 @@ func (d *PostgresDriver) StreamRows(table string, opts StreamOptions, batchSize 
 		d.QuoteIdentifier(table))
 
 	var args []any
+	var whereClauses []string
+	placeholderNum := 1
 
 	// Add date-based WHERE clause if specified
 	if opts.ColumnName != "" && !opts.AfterDate.IsZero() {
-		query += fmt.Sprintf(" WHERE %s > $1", d.QuoteIdentifier(opts.ColumnName))
+		whereClauses = append(whereClauses, fmt.Sprintf("%s > $%d", d.QuoteIdentifier(opts.ColumnName), placeholderNum))
 		args = append(args, opts.AfterDate.Format("2006-01-02 15:04:05"))
+		placeholderNum++
+	}
+
+	// Add FK filter WHERE clauses
+	for _, filter := range opts.FKFilters {
+		if len(filter.AllowedValues) == 0 && !filter.AllowNull {
+			// No allowed values and NULL not allowed means no rows can match
+			return nil
+		}
+
+		clause := d.buildFKFilterClause(filter, &args, &placeholderNum)
+		if clause != "" {
+			whereClauses = append(whereClauses, clause)
+		}
+	}
+
+	// Combine WHERE clauses
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
 	// Add LIMIT clause if specified
@@ -285,6 +332,53 @@ func (d *PostgresDriver) GetRowCount(table string) (int64, error) {
 	return count, nil
 }
 
+// GetFilteredRowCount returns the number of rows that would be exported given the stream options.
+func (d *PostgresDriver) GetFilteredRowCount(table string, opts StreamOptions) (int64, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", d.QuoteIdentifier(table))
+
+	var args []any
+	var whereClauses []string
+	placeholderNum := 1
+
+	// Add date-based WHERE clause if specified
+	if opts.ColumnName != "" && !opts.AfterDate.IsZero() {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s > $%d", d.QuoteIdentifier(opts.ColumnName), placeholderNum))
+		args = append(args, opts.AfterDate.Format("2006-01-02 15:04:05"))
+		placeholderNum++
+	}
+
+	// Add FK filter WHERE clauses
+	for _, filter := range opts.FKFilters {
+		if len(filter.AllowedValues) == 0 && !filter.AllowNull {
+			// No allowed values and NULL not allowed means no rows can match
+			return 0, nil
+		}
+
+		clause := d.buildFKFilterClause(filter, &args, &placeholderNum)
+		if clause != "" {
+			whereClauses = append(whereClauses, clause)
+		}
+	}
+
+	// Combine WHERE clauses
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	var count int64
+	err := d.db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count filtered rows: %w", err)
+	}
+
+	// Apply limit if specified
+	if opts.Limit > 0 && count > int64(opts.Limit) {
+		return int64(opts.Limit), nil
+	}
+
+	return count, nil
+}
+
 // QuoteIdentifier quotes an identifier for PostgreSQL.
 func (d *PostgresDriver) QuoteIdentifier(name string) string {
 	return "\"" + strings.ReplaceAll(name, "\"", "\"\"") + "\""
@@ -293,4 +387,33 @@ func (d *PostgresDriver) QuoteIdentifier(name string) string {
 // GetDatabaseType returns "postgres".
 func (d *PostgresDriver) GetDatabaseType() string {
 	return "postgres"
+}
+
+// buildFKFilterClause builds a WHERE clause for a foreign key filter.
+func (d *PostgresDriver) buildFKFilterClause(filter FKFilter, args *[]any, placeholderNum *int) string {
+	quotedCol := d.QuoteIdentifier(filter.Column)
+
+	if len(filter.AllowedValues) == 0 {
+		// Only NULL is allowed
+		if filter.AllowNull {
+			return fmt.Sprintf("%s IS NULL", quotedCol)
+		}
+		return "" // No values allowed, will be handled by caller
+	}
+
+	// Build IN clause with numbered placeholders
+	placeholders := make([]string, len(filter.AllowedValues))
+	for i, v := range filter.AllowedValues {
+		placeholders[i] = fmt.Sprintf("$%d", *placeholderNum)
+		*placeholderNum++
+		*args = append(*args, v)
+	}
+
+	inClause := fmt.Sprintf("%s IN (%s)", quotedCol, strings.Join(placeholders, ", "))
+
+	if filter.AllowNull {
+		return fmt.Sprintf("(%s OR %s IS NULL)", inClause, quotedCol)
+	}
+
+	return inClause
 }
